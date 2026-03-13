@@ -48,3 +48,17 @@ export type TenderSearchResponse = {
   limit: number;
   query: string;
 };
+
+export type CompanyProfile = {
+  websiteUrl: string;
+  keywords: string[];
+  hqCountryInput: string;
+  hqCountryIso3?: string;
+  contractNature: ContractNature | 'all';
+};
+
+export type TenderRelevanceScore = {
+  tenderId: string;
+  score: number;
+  reason: string;
+};

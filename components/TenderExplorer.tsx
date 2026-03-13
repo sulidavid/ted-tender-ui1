@@ -2,7 +2,13 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { CalendarDays, ExternalLink, FileText, Loader2, Search, X } from 'lucide-react';
-import type { ContractNature, TenderRecord, TenderSearchResponse } from '@/lib/types';
+import type {
+  CompanyProfile,
+  ContractNature,
+  TenderRecord,
+  TenderRelevanceScore,
+  TenderSearchResponse
+} from '@/lib/types';
 
 const buyerCountries = [
   { label: 'All countries', value: '' },
@@ -26,7 +32,7 @@ const contractNatureOptions: { label: string; value: ContractNature }[] = [
 ];
 
 export default function TenderExplorer() {
-  const [keyword, setKeyword] = useState('sap erp');
+  const [keyword, setKeyword] = useState('');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [buyerCountry, setBuyerCountry] = useState('');
@@ -36,6 +42,12 @@ export default function TenderExplorer() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<TenderRecord | null>(null);
+  const [profile, setProfile] = useState<CompanyProfile | null>(null);
+  const [profileModalOpen, setProfileModalOpen] = useState(true);
+  const [profileSubmitting, setProfileSubmitting] = useState(false);
+  const [aiScores, setAiScores] = useState<Record<string, TenderRelevanceScore>>({});
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiError, setAiError] = useState<string | null>(null);
 
   const params = useMemo(() => {
     const search = new URLSearchParams({
@@ -88,6 +100,46 @@ export default function TenderExplorer() {
 
   return (
     <main className="page-shell">
+      {profileModalOpen ? (
+        <CompanyProfileModal
+          onClose={() => setProfileModalOpen(false)}
+          onSubmit={(data) => {
+            setProfileSubmitting(true);
+            try {
+              const iso3 = mapCountryToIso3(data.hqCountryInput);
+              const cleanedKeywords = [data.keyword1, data.keyword2, data.keyword3]
+                .map((k) => k.trim())
+                .filter((k) => k.length > 0);
+
+              const profileValue: CompanyProfile = {
+                websiteUrl: data.websiteUrl.trim(),
+                keywords: cleanedKeywords,
+                hqCountryInput: data.hqCountryInput.trim(),
+                hqCountryIso3: iso3 || undefined,
+                contractNature: data.contractNature
+              };
+
+              setProfile(profileValue);
+
+              if (cleanedKeywords.length) {
+                setKeyword(cleanedKeywords.join(', '));
+              }
+              if (iso3) {
+                setBuyerCountry(iso3);
+              }
+              if (data.contractNature) {
+                setContractNature(data.contractNature);
+              }
+              setPage(1);
+              setProfileModalOpen(false);
+            } finally {
+              setProfileSubmitting(false);
+            }
+          }}
+          submitting={profileSubmitting}
+        />
+      ) : null}
+
       <section className="hero">
         <div>
           <p className="eyebrow">TED procurement explorer</p>
@@ -187,7 +239,36 @@ export default function TenderExplorer() {
                 : 'No data yet'}
           </p>
         </div>
-        {response?.query ? <code className="query-chip">{response.query}</code> : null}
+        <div className="results-header-actions">
+          {response?.query ? <code className="query-chip">{response.query}</code> : null}
+          <div className="results-header-ai">
+            <button
+              type="button"
+              className="ai-button"
+              disabled={!response || loading || aiLoading || !profile}
+              onClick={() => {
+                void runAiScoring({
+                  response,
+                  profile,
+                  setAiScores,
+                  setAiLoading,
+                  setAiError
+                });
+              }}
+            >
+              {aiLoading ? (
+                <>
+                  <Loader2 className="spin" size={14} />
+                  <span>Scoring tenders…</span>
+                </>
+              ) : (
+                <span>Score relevance with AI</span>
+              )}
+            </button>
+            {aiError ? <span className="ai-error-text">{aiError}</span> : null}
+            {!profile ? <span className="ai-hint-text">Set your company profile to enable AI scoring.</span> : null}
+          </div>
+        </div>
       </section>
 
       {error ? <div className="panel error-box">{error}</div> : null}
@@ -206,6 +287,12 @@ export default function TenderExplorer() {
                   {tender.noticeType ? <span className="badge">{tender.noticeType}</span> : null}
                   {tender.contractNature ? <span className="muted-pill">{tender.contractNature}</span> : null}
                   {tender.buyerCountry ? <span className="muted-pill">{tender.buyerCountry}</span> : null}
+                  {aiScores[tender.id] ? (
+                    <span className="badge ai-score-badge">
+                      Relevance: {aiScores[tender.id].score}
+                      /100
+                    </span>
+                  ) : null}
                 </div>
 
                 <h3>{tender.title}</h3>
@@ -426,3 +513,203 @@ function formatSmeLabel(value?: string) {
   if (['false', 'no', 'n', '0'].includes(normalized)) return 'No';
   return value;
 }
+
+function mapCountryToIso3(input: string): string {
+  const normalized = input.trim().toLowerCase();
+  if (!normalized) return '';
+
+  const exact = buyerCountries.find((c) => c.label.toLowerCase() === normalized);
+  if (exact) return exact.value;
+
+  const partial = buyerCountries.find((c) => c.label.toLowerCase().includes(normalized));
+  if (partial) return partial.value;
+
+  const iso = buyerCountries.find((c) => c.value.toLowerCase() === normalized);
+  return iso?.value ?? '';
+}
+
+async function runAiScoring(args: {
+  response: TenderSearchResponse | null;
+  profile: CompanyProfile | null;
+  setAiScores: (value: Record<string, TenderRelevanceScore>) => void;
+  setAiLoading: (value: boolean) => void;
+  setAiError: (value: string | null) => void;
+}) {
+  const { response, profile, setAiScores, setAiLoading, setAiError } = args;
+
+  if (!response || !profile) return;
+  if (response.total > 40) {
+    setAiError('AI scoring is only available when 40 or fewer tenders are returned. Please narrow your filters.');
+    return;
+  }
+
+  const tendersForAi = response.tenders.slice(0, 20).map((tender) => ({
+    id: tender.id,
+    title: tender.title,
+    buyerCountry: tender.buyerCountry,
+    contractNature: tender.contractNature,
+    lots: tender.lots ?? []
+  }));
+
+  if (!tendersForAi.length) {
+    setAiError('No tenders available to score.');
+    return;
+  }
+
+  setAiLoading(true);
+  setAiError(null);
+
+  try {
+    const res = await fetch('/api/ai/score-tenders', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        profile,
+        tenders: tendersForAi
+      })
+    });
+
+    const data = await res.json();
+
+    if (!res.ok) {
+      throw new Error(data?.error || 'Failed to score tenders with AI.');
+    }
+
+    const scoresArray = (data?.scores ?? []) as TenderRelevanceScore[];
+    const map: Record<string, TenderRelevanceScore> = {};
+    for (const item of scoresArray) {
+      if (item?.tenderId) {
+        map[item.tenderId] = item;
+      }
+    }
+    setAiScores(map);
+  } catch (error) {
+    setAiError(error instanceof Error ? error.message : 'Failed to score tenders with AI.');
+  } finally {
+    setAiLoading(false);
+  }
+}
+
+type CompanyProfileModalProps = {
+  onClose: () => void;
+  onSubmit: (data: {
+    websiteUrl: string;
+    keyword1: string;
+    keyword2: string;
+    keyword3: string;
+    hqCountryInput: string;
+    contractNature: ContractNature | 'all';
+  }) => void;
+  submitting: boolean;
+};
+
+function CompanyProfileModal({ onClose, onSubmit, submitting }: CompanyProfileModalProps) {
+  const [websiteUrl, setWebsiteUrl] = useState('');
+  const [keyword1, setKeyword1] = useState('');
+  const [keyword2, setKeyword2] = useState('');
+  const [keyword3, setKeyword3] = useState('');
+  const [hqCountryInput, setHqCountryInput] = useState('');
+  const [contractNature, setContractNatureValue] = useState<ContractNature | 'all'>('services');
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal-card profile-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-header">
+          <div>
+            <p className="eyebrow">Company profile</p>
+            <h3>Tell us what you are looking for</h3>
+          </div>
+          <button className="icon-button" onClick={onClose} aria-label="Close modal" disabled={submitting}>
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className="modal-section">
+          <p>
+            We will use this information to prefill the TED filters and later score tenders based on how well they
+            match your company.
+          </p>
+        </div>
+
+        <div className="profile-form-grid">
+          <label className="field">
+            <span>Website URL</span>
+            <input
+              type="url"
+              value={websiteUrl}
+              onChange={(e) => setWebsiteUrl(e.target.value)}
+              placeholder="https://example.com"
+            />
+          </label>
+
+          <label className="field">
+            <span>Keyword 1</span>
+            <input
+              value={keyword1}
+              onChange={(e) => setKeyword1(e.target.value)}
+              placeholder="e.g. SAP S/4HANA"
+            />
+          </label>
+
+          <label className="field">
+            <span>Keyword 2</span>
+            <input value={keyword2} onChange={(e) => setKeyword2(e.target.value)} placeholder="Optional" />
+          </label>
+
+          <label className="field">
+            <span>Keyword 3</span>
+            <input value={keyword3} onChange={(e) => setKeyword3(e.target.value)} placeholder="Optional" />
+          </label>
+
+          <label className="field">
+            <span>Country of company HQ</span>
+            <input
+              value={hqCountryInput}
+              onChange={(e) => setHqCountryInput(e.target.value)}
+              placeholder="e.g. Germany"
+            />
+          </label>
+
+          <label className="field">
+            <span>What do you sell? (contract nature)</span>
+            <select
+              value={contractNature}
+              onChange={(e) => setContractNatureValue(e.target.value as ContractNature | 'all')}
+            >
+              <option value="services">Services</option>
+              <option value="supplies">Supplies</option>
+              <option value="works">Works</option>
+              <option value="all">All types</option>
+            </select>
+          </label>
+        </div>
+
+        <div className="profile-modal-actions">
+          <button className="secondary-button" type="button" onClick={onClose} disabled={submitting}>
+            Cancel
+          </button>
+          <button
+            className="primary-button"
+            type="button"
+            disabled={submitting || !websiteUrl.trim() || !keyword1.trim()}
+            onClick={() =>
+              onSubmit({
+                websiteUrl,
+                keyword1,
+                keyword2,
+                keyword3,
+                hqCountryInput,
+                contractNature
+              })
+            }
+          >
+            {submitting ? 'Saving…' : 'Apply profile'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+

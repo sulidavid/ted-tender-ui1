@@ -58,8 +58,18 @@ export function buildTedExpertQuery(params: TenderSearchParams): string {
   clauses.push(`deadline-receipt-request >= ${today}`);
 
   if (params.keyword.trim()) {
-    const safeKeyword = params.keyword.replace(/"/g, '');
-    clauses.push(`FT ~ (${safeKeyword})`);
+    const rawParts = params.keyword.split(/[,\n]/);
+    const parts = rawParts
+      .map((part) => part.trim())
+      .filter((part) => part.length > 0)
+      .map((part) => part.replace(/"/g, ''));
+
+    if (parts.length === 1) {
+      clauses.push(`FT = ("${parts[0]}")`);
+    } else if (parts.length > 1) {
+      const combined = parts.map((p) => `"${p}"`).join(' OR ');
+      clauses.push(`FT = (${combined})`);
+    }
   }
 
   if (params.dateFrom && params.dateTo) {

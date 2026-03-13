@@ -136,6 +136,13 @@ button, input, select { font: inherit; }
   color: var(--muted);
 }
 
+.results-header-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+}
+
 .query-chip {
   max-width: 58%;
   white-space: nowrap;
@@ -146,6 +153,46 @@ button, input, select { font: inherit; }
   border-radius: 999px;
   padding: 10px 14px;
   color: var(--muted);
+}
+
+.results-header-ai {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
+
+.ai-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 0 14px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: #0f172a;
+  color: #e5e7eb;
+  font-size: 0.86rem;
+  cursor: pointer;
+}
+
+.ai-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.ai-error-text {
+  max-width: 260px;
+  text-align: right;
+  color: #b91c1c;
+  font-size: 0.8rem;
+}
+
+.ai-hint-text {
+  max-width: 260px;
+  text-align: right;
+  color: var(--muted);
+  font-size: 0.8rem;
 }
 
 .results-list {
@@ -198,6 +245,12 @@ button, input, select { font: inherit; }
 .muted-pill {
   background: #fff;
   color: var(--muted);
+}
+
+.ai-score-badge {
+  background: #ecfdf3;
+  color: #166534;
+  border-color: rgba(22, 101, 52, 0.22);
 }
 
 .tender-card h3 {
@@ -409,6 +462,54 @@ button, input, select { font: inherit; }
   line-height: 1.55;
 }
 
+.profile-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin-top: 16px;
+}
+
+.profile-modal-actions {
+  margin-top: 20px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.primary-button,
+.secondary-button {
+  min-height: 40px;
+  padding: 0 16px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  cursor: pointer;
+}
+
+.primary-button {
+  background: var(--accent);
+  color: #fff;
+  border-color: transparent;
+}
+
+.secondary-button {
+  background: #fff;
+}
+
+.primary-button:disabled,
+.secondary-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.profile-modal {
+  max-width: 720px;
+}
+
+.profile-modal .modal-section p {
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
 .lot-block {
   margin-top: 14px;
 }
@@ -433,6 +534,7 @@ button, input, select { font: inherit; }
 @media (max-width: 720px) {
   .page-shell { padding-inline: 14px; }
   .filters-grid,
-  .modal-summary-grid { grid-template-columns: 1fr; }
+  .modal-summary-grid,
+  .profile-form-grid { grid-template-columns: 1fr; }
   .results-header { flex-direction: column; }
 }
