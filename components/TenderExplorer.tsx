@@ -9,6 +9,8 @@ import type {
   TenderRelevanceScore,
   TenderSearchResponse
 } from '@/lib/types';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useRouter, useSearchParams } from 'next/navigation';
 
 const buyerCountries = [
   { label: 'All countries', value: '' },
@@ -32,21 +34,44 @@ const contractNatureOptions: { label: string; value: ContractNature }[] = [
 ];
 
 export default function TenderExplorer() {
-  const [keyword, setKeyword] = useState('');
-  const [dateFrom, setDateFrom] = useState('');
-  const [dateTo, setDateTo] = useState('');
-  const [buyerCountry, setBuyerCountry] = useState('');
-  const [contractNature, setContractNature] = useState<ContractNature>('all');
-  const [page, setPage] = useState(1);
-  const [response, setResponse] = useState<TenderSearchResponse | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const queryClient = useQueryClient();
+
+  const [keyword, setKeyword] = useState(searchParams.get('keyword') ?? '');
+  const [dateFrom, setDateFrom] = useState(searchParams.get('dateFrom') ?? '');
+  const [dateTo, setDateTo] = useState(searchParams.get('dateTo') ?? '');
+  const [buyerCountry, setBuyerCountry] = useState(searchParams.get('buyerCountry') ?? '');
+  const [contractNature, setContractNature] = useState<ContractNature>(
+    (searchParams.get('contractNature') as ContractNature) || 'all'
+  );
+  const [page, setPage] = useState(() => {
+    const fromUrl = Number.parseInt(searchParams.get('page') ?? '1', 10);
+    return Number.isNaN(fromUrl) || fromUrl < 1 ? 1 : fromUrl;
+  });
   const [selected, setSelected] = useState<TenderRecord | null>(null);
   const [profile, setProfile] = useState<CompanyProfile | null>(null);
-  const [profileModalOpen, setProfileModalOpen] = useState(true);
+  const [profileModalOpen, setProfileModalOpen] = useState(() => {
+    const fromUrl = searchParams.get('profile');
+    return !fromUrl;
+  });
   const [profileSubmitting, setProfileSubmitting] = useState(false);
-  const [aiScores, setAiScores] = useState<Record<string, TenderRelevanceScore>>({});
-  const [aiLoading, setAiLoading] = useState(false);
+  const [aiScores, setAiScores] = useState<Record<string, TenderRelevanceScore>>(() => {
+    const fromUrl = searchParams.get('scores');
+    if (!fromUrl) return {};
+    try {
+      const parsed = JSON.parse(decodeURIComponent(fromUrl)) as TenderRelevanceScore[];
+      const map: Record<string, TenderRelevanceScore> = {};
+      for (const item of parsed) {
+        if (item?.tenderId) {
+          map[item.tenderId] = item;
+        }
+      }
+      return map;
+    } catch {
+      return {};
+    }
+  });
   const [aiError, setAiError] = useState<string | null>(null);
 
   const params = useMemo(() => {
@@ -60,41 +85,106 @@ export default function TenderExplorer() {
       limit: '10',
       scope: 'ACTIVE'
     });
-    return search.toString();
+    return search;
   }, [keyword, dateFrom, dateTo, buyerCountry, contractNature, page]);
 
   useEffect(() => {
-    const controller = new AbortController();
+    const url = `/?${params.toString()}`;
+    router.replace(url);
+  }, [params, router]);
 
-    async function load() {
-      setLoading(true);
-      setError(null);
-
-      try {
-        const res = await fetch(`/api/tenders?${params}`, {
-          signal: controller.signal,
-          cache: 'no-store'
-        });
-        const data = await res.json();
-
-        if (!res.ok) {
-          throw new Error(data?.error || 'Failed to load tenders');
-        }
-
-        setResponse(data);
-      } catch (err) {
-        if ((err as Error).name !== 'AbortError') {
-          setError(err instanceof Error ? err.message : 'Failed to load tenders');
-        }
-      } finally {
-        setLoading(false);
-      }
+  useEffect(() => {
+    const profileParam = searchParams.get('profile');
+    if (!profileParam) return;
+    try {
+      const decoded = JSON.parse(decodeURIComponent(profileParam)) as CompanyProfile;
+      setProfile(decoded);
+    } catch {
+      // ignore malformed profile param
     }
+  }, [searchParams]);
 
-    void load();
+  const { data: response, isLoading: loading, error } = useQuery<TenderSearchResponse, Error>({
+    queryKey: ['tenders', Object.fromEntries(params)],
+    queryFn: async () => {
+      const res = await fetch(`/api/tenders?${params.toString()}`, { cache: 'no-store' });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data?.error || 'Failed to load tenders');
+      }
+      return data as TenderSearchResponse;
+    }
+  });
 
-    return () => controller.abort();
-  }, [params]);
+  const aiMutation = useMutation({
+    mutationFn: async (input: { response: TenderSearchResponse; profile: CompanyProfile }) => {
+      const { response: resp, profile: prof } = input;
+      if (resp.total > 40) {
+        throw new Error(
+          'AI scoring is only available when 40 or fewer tenders are returned. Please narrow your filters.'
+        );
+      }
+
+      const tendersForAi = resp.tenders.slice(0, 20).map((tender) => ({
+        id: tender.id,
+        title: tender.title,
+        buyerCountry: tender.buyerCountry,
+        contractNature: tender.contractNature,
+        lots: tender.lots ?? []
+      }));
+
+      if (!tendersForAi.length) {
+        throw new Error('No tenders available to score.');
+      }
+
+      const res = await fetch('/api/ai/score-tenders', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          profile: prof,
+          tenders: tendersForAi
+        })
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data?.error || 'Failed to score tenders with AI.');
+      }
+
+      return (data?.scores ?? []) as TenderRelevanceScore[];
+    },
+    onSuccess: (scoresArray) => {
+      const map: Record<string, TenderRelevanceScore> = {};
+      for (const item of scoresArray) {
+        if (item?.tenderId) {
+          map[item.tenderId] = item;
+        }
+      }
+      setAiScores(map);
+      // store in URL
+      try {
+        const compact = scoresArray.map((s) => ({
+          tenderId: s.tenderId,
+          score: s.score,
+          reason: s.reason
+        }));
+        const encodedScores = encodeURIComponent(JSON.stringify(compact));
+        const nextParams = new URLSearchParams(params);
+        nextParams.set('scores', encodedScores);
+        router.replace(`/?${nextParams.toString()}`);
+      } catch {
+        // ignore encoding errors
+      }
+    },
+    onError: (err: unknown) => {
+      setAiError(err instanceof Error ? err.message : 'Failed to score tenders with AI.');
+    }
+  });
+
+  const aiLoading = aiMutation.isPending;
 
   const totalPages = response ? Math.max(1, Math.ceil(response.total / response.limit)) : 1;
 
@@ -120,6 +210,11 @@ export default function TenderExplorer() {
               };
 
               setProfile(profileValue);
+              const encodedProfile = encodeURIComponent(JSON.stringify(profileValue));
+              const nextParams = new URLSearchParams(params);
+              nextParams.set('profile', encodedProfile);
+              router.replace(`/?${nextParams.toString()}`);
+              queryClient.setQueryData(['companyProfile'], profileValue);
 
               if (cleanedKeywords.length) {
                 setKeyword(cleanedKeywords.join(', '));
@@ -244,16 +339,35 @@ export default function TenderExplorer() {
           <div className="results-header-ai">
             <button
               type="button"
+              className="share-button"
+              onClick={async () => {
+                const shareUrl = new URL(window.location.href);
+                // Clean up: remove any empty params
+                const sp = shareUrl.searchParams;
+                ['keyword', 'dateFrom', 'dateTo', 'buyerCountry', 'contractNature', 'page', 'profile', 'scores'].forEach(
+                  (key) => {
+                    const value = sp.get(key);
+                    if (!value) sp.delete(key);
+                  }
+                );
+                shareUrl.search = sp.toString();
+                try {
+                  await navigator.clipboard.writeText(shareUrl.toString());
+                } catch {
+                  // ignore clipboard errors
+                }
+              }}
+            >
+              Copy share link
+            </button>
+            <button
+              type="button"
               className="ai-button"
               disabled={!response || loading || aiLoading || !profile}
               onClick={() => {
-                void runAiScoring({
-                  response,
-                  profile,
-                  setAiScores,
-                  setAiLoading,
-                  setAiError
-                });
+                if (!response || !profile) return;
+                setAiError(null);
+                aiMutation.mutate({ response, profile });
               }}
             >
               {aiLoading ? (
@@ -526,70 +640,6 @@ function mapCountryToIso3(input: string): string {
 
   const iso = buyerCountries.find((c) => c.value.toLowerCase() === normalized);
   return iso?.value ?? '';
-}
-
-async function runAiScoring(args: {
-  response: TenderSearchResponse | null;
-  profile: CompanyProfile | null;
-  setAiScores: (value: Record<string, TenderRelevanceScore>) => void;
-  setAiLoading: (value: boolean) => void;
-  setAiError: (value: string | null) => void;
-}) {
-  const { response, profile, setAiScores, setAiLoading, setAiError } = args;
-
-  if (!response || !profile) return;
-  if (response.total > 40) {
-    setAiError('AI scoring is only available when 40 or fewer tenders are returned. Please narrow your filters.');
-    return;
-  }
-
-  const tendersForAi = response.tenders.slice(0, 20).map((tender) => ({
-    id: tender.id,
-    title: tender.title,
-    buyerCountry: tender.buyerCountry,
-    contractNature: tender.contractNature,
-    lots: tender.lots ?? []
-  }));
-
-  if (!tendersForAi.length) {
-    setAiError('No tenders available to score.');
-    return;
-  }
-
-  setAiLoading(true);
-  setAiError(null);
-
-  try {
-    const res = await fetch('/api/ai/score-tenders', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        profile,
-        tenders: tendersForAi
-      })
-    });
-
-    const data = await res.json();
-
-    if (!res.ok) {
-      throw new Error(data?.error || 'Failed to score tenders with AI.');
-    }
-
-    const scoresArray = (data?.scores ?? []) as TenderRelevanceScore[];
-    const map: Record<string, TenderRelevanceScore> = {};
-    for (const item of scoresArray) {
-      if (item?.tenderId) {
-        map[item.tenderId] = item;
-      }
-    }
-    setAiScores(map);
-  } catch (error) {
-    setAiError(error instanceof Error ? error.message : 'Failed to score tenders with AI.');
-  } finally {
-    setAiLoading(false);
-  }
 }
 
 type CompanyProfileModalProps = {

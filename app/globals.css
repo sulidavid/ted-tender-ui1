@@ -162,6 +162,24 @@ button, input, select { font: inherit; }
   gap: 4px;
 }
 
+.share-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 32px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: #ffffff;
+  color: var(--text);
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.share-button:active {
+  transform: translateY(0.5px);
+}
+
 .ai-button {
   display: inline-flex;
   align-items: center;
