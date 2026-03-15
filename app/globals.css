@@ -319,6 +319,23 @@ button, input, select { font: inherit; }
   font-weight: 600;
 }
 
+.tender-card-actions .btn-docs {
+  background: #e0f2fe;
+  border-color: rgba(37, 99, 235, 0.4);
+  color: #1d4ed8;
+}
+
+.tender-card-actions .btn-submission {
+  background: #eef2ff;
+  border-color: rgba(79, 70, 229, 0.4);
+  color: #4f46e5;
+}
+
+.tender-card-actions .btn-ted-link {
+  background: #ffffff;
+  color: var(--text);
+}
+
 .action-missing {
   text-align: right;
   color: var(--muted);

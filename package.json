@@ -12,6 +12,7 @@
     "@tanstack/query-sync-storage-persister": "^5.90.24",
     "@tanstack/react-query": "^5.90.21",
     "@tanstack/react-query-persist-client": "^5.90.24",
+    "geoip-lite": "^2.0.0",
     "lucide-react": "^0.511.0",
     "next": "15.2.2",
     "react": "19.0.0",
@@ -19,6 +20,7 @@
     "zod": "^3.24.2"
   },
   "devDependencies": {
+    "@types/geoip-lite": "^1.4.4",
     "@types/node": "^22.13.10",
     "@types/react": "^19.0.10",
     "@types/react-dom": "^19.0.4",

@@ -33,14 +33,34 @@ const contractNatureOptions: { label: string; value: ContractNature }[] = [
   { label: 'Works', value: 'works' }
 ];
 
+function getDefaultPublicationDateRange(): { from: string; to: string } {
+  const today = new Date();
+  const from = new Date(today);
+  from.setDate(from.getDate() - 30);
+  const fmt = (d: Date) =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  return {
+    from: fmt(from),
+    to: fmt(today)
+  };
+}
+
 export default function TenderExplorer() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const queryClient = useQueryClient();
 
   const [keyword, setKeyword] = useState(searchParams.get('keyword') ?? '');
-  const [dateFrom, setDateFrom] = useState(searchParams.get('dateFrom') ?? '');
-  const [dateTo, setDateTo] = useState(searchParams.get('dateTo') ?? '');
+  const [dateFrom, setDateFrom] = useState(() => {
+    const url = searchParams.get('dateFrom');
+    if (url) return url;
+    return getDefaultPublicationDateRange().from;
+  });
+  const [dateTo, setDateTo] = useState(() => {
+    const url = searchParams.get('dateTo');
+    if (url) return url;
+    return getDefaultPublicationDateRange().to;
+  });
   const [buyerCountry, setBuyerCountry] = useState(searchParams.get('buyerCountry') ?? '');
   const [contractNature, setContractNature] = useState<ContractNature>(
     (searchParams.get('contractNature') as ContractNature) || 'all'
@@ -237,11 +257,10 @@ export default function TenderExplorer() {
 
       <section className="hero">
         <div>
-          <p className="eyebrow">TED procurement explorer</p>
-          <h1>A cleaner UI for TED tender search</h1>
+          <p className="eyebrow">AI TOOLS BY CLOUDWYSE</p>
+          <h1>AI Search Engine for public tenders</h1>
           <p className="hero-copy">
-            This interface keeps the data source on TED, but makes search and triage simpler: compact result cards,
-            quick filters, and a modal for the full notice payload.
+          It scans thousands of public tenders across Europe, analyzes them with AI, and delivers only the ones that fit your business.
           </p>
         </div>
       </section>
@@ -335,7 +354,6 @@ export default function TenderExplorer() {
           </p>
         </div>
         <div className="results-header-actions">
-          {response?.query ? <code className="query-chip">{response.query}</code> : null}
           <div className="results-header-ai">
             <button
               type="button"
@@ -394,19 +412,28 @@ export default function TenderExplorer() {
             <span>Fetching notices from TED…</span>
           </div>
         ) : response?.tenders?.length ? (
-          response.tenders.map((tender) => (
+          (() => {
+            const tenders = response.tenders;
+            const hasScores = tenders.some((t) => aiScores[t.id]);
+            const sorted = hasScores
+              ? [...tenders].sort(
+                  (a, b) => (aiScores[b.id]?.score ?? -1) - (aiScores[a.id]?.score ?? -1)
+                )
+              : tenders;
+            return sorted.map((tender) => (
             <article key={tender.id} className="tender-card" onClick={() => setSelected(tender)}>
               <div className="tender-card-main">
                 <div className="tender-card-topline">
-                  {tender.noticeType ? <span className="badge">{tender.noticeType}</span> : null}
-                  {tender.contractNature ? <span className="muted-pill">{tender.contractNature}</span> : null}
-                  {tender.buyerCountry ? <span className="muted-pill">{tender.buyerCountry}</span> : null}
                   {aiScores[tender.id] ? (
                     <span className="badge ai-score-badge">
-                      Relevance: {aiScores[tender.id].score}
+                      Match score: {aiScores[tender.id].score}
                       /100
                     </span>
+                  ) : tender.noticeType ? (
+                    <span className="badge">{tender.noticeType}</span>
                   ) : null}
+                  {tender.contractNature ? <span className="muted-pill">{tender.contractNature}</span> : null}
+                  {tender.buyerCountry ? <span className="muted-pill">{tender.buyerCountry}</span> : null}
                 </div>
 
                 <h3>{tender.title}</h3>
@@ -417,35 +444,50 @@ export default function TenderExplorer() {
                     Deadline: {formatDeadlineLabel(tender.deadline)}
                   </span>
                   {tender.buyerName ? <span>Buyer: {tender.buyerName}</span> : null}
-                  {tender.publicationDate ? <span>Published: {formatDate(tender.publicationDate)}</span> : null}
                 </div>
 
                 <p className="description-preview">{truncate(tender.description, 260)}</p>
               </div>
 
               <div className="tender-card-actions" onClick={(e) => e.stopPropagation()}>
-                {tender.tedHtmlUrl ? (
-                  <a href={tender.tedHtmlUrl} target="_blank" rel="noreferrer">
-                    <ExternalLink size={15} />
-                    Tender link
-                  </a>
-                ) : null}
                 {tender.procurementDocsUrl ? (
-                  <a href={tender.procurementDocsUrl} target="_blank" rel="noreferrer">
+                  <a
+                    href={tender.procurementDocsUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="btn-docs"
+                  >
                     <FileText size={15} />
                     Auftragsunterlagen
                   </a>
                 ) : null}
                 {tender.submissionUrl ? (
-                  <a href={tender.submissionUrl} target="_blank" rel="noreferrer">
+                  <a
+                    href={tender.submissionUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="btn-submission"
+                  >
                     <ExternalLink size={15} />
                     Submission link
+                  </a>
+                ) : null}
+                {tender.tedHtmlUrl ? (
+                  <a
+                    href={tender.tedHtmlUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="btn-ted-link"
+                  >
+                    <ExternalLink size={15} />
+                    Tender link
                   </a>
                 ) : null}
                 {!tender.procurementDocsUrl ? <span className="action-missing">No procurement docs URL returned</span> : null}
               </div>
             </article>
-          ))
+            ));
+          })()
         ) : (
           <div className="panel empty-box">No tenders matched the current filters.</div>
         )}
