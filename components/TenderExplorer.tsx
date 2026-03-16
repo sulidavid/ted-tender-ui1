@@ -110,7 +110,8 @@ export default function TenderExplorer() {
 
   useEffect(() => {
     const url = `/?${params.toString()}`;
-    router.replace(url);
+    // Cast to satisfy strict Next.js Route typing in some build environments
+    router.replace(url as any);
   }, [params, router]);
 
   useEffect(() => {
