@@ -404,7 +404,7 @@ export default function TenderExplorer() {
         </div>
       </section>
 
-      {error ? <div className="panel error-box">{error}</div> : null}
+      {error ? <div className="panel error-box">{error.message}</div> : null}
 
       <section className="results-list">
         {loading ? (
